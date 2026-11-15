@@ -1,3 +1,7 @@
+[![make.fun · free-model-aggregator-02](https://make.fun/badge/free-model-aggregator-02.svg)](https://make.fun/bounty/free-model-aggregator-02?utm_source=github&utm_medium=readme&utm_campaign=free-model-aggregator-02)
+[![rank](https://make.fun/badge/free-model-aggregator-02/binasalama12/makefun-free-model-aggregator-02-w8/rank.svg)](https://make.fun/bounty/free-model-aggregator-02/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=free-model-aggregator-02)
+[![reward](https://make.fun/badge/free-model-aggregator-02/binasalama12/makefun-free-model-aggregator-02-w8/reward.svg)](https://make.fun/bounty/free-model-aggregator-02?utm_source=github&utm_medium=readme&utm_campaign=free-model-aggregator-02)
+
 # LatencyAware Gateway
 
 A single-file free-model aggregator built for the make.fun
