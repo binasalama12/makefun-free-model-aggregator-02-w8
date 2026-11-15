@@ -187,21 +187,25 @@ interface ModelHealth {
   demoteLeft: number;
   /** Routing decisions for which this model is parked after a refusal. */
   parkLeft: number;
+  /** Refusals in a row with no success between them: parks escalate on it. */
+  refuseStreak: number;
 }
 
 const SLOW_CALL_MS = 3500;      // one call slower than this earns a demotion
 const SLOW_AVG_MS = 2500;       // …and so does a slow running average
 const DEMOTE_SPAN = 3;          // decisions a latency demotion lasts
-const DEMOTE_POINTS = 260;      // milli-points subtracted while demoted
-const PARK_AFTER_429 = 3;       // decisions a rate-limited model sits out
-const PARK_AFTER_5XX = 2;       // decisions a 5xx-refused model sits out
+const DEMOTE_BASE = 180;        // milli-points a demotion costs, before the graduated part
+const DEMOTE_MAX_EXTRA = 220;   // extra milli-points for extreme slowness
+const PARK_AFTER_429 = 3;       // decisions a first rate-limit parks a model
+const PARK_AFTER_5XX = 2;       // decisions a first 5xx refusal parks a model
+const PARK_CAP = 9;             // no park, however stubborn the streak, runs longer
 
 const health = new Map<string, ModelHealth>();
 
 function healthOf(id: string): ModelHealth {
   let h = health.get(id);
   if (!h) {
-    h = { calls: 0, totalMs: 0, worstMs: 0, demoteLeft: 0, parkLeft: 0 };
+    h = { calls: 0, totalMs: 0, worstMs: 0, demoteLeft: 0, parkLeft: 0, refuseStreak: 0 };
     health.set(id, h);
   }
   return h;
@@ -227,17 +231,34 @@ function observeDuration(id: string, ms: number): void {
   }
 }
 
-/** Park a refused model so later prompts do not burn calls on it. */
+/**
+ * Park a refused model so later prompts do not burn calls on it. Revision:
+ * the park ESCALATES with the refusal streak — a model that keeps refusing
+ * every time its park lapses sits out longer each round (two extra decisions
+ * per consecutive refusal), because re-probing a chronically limited model
+ * costs gateway calls that the tie-break counts. A success clears the streak
+ * (see dialWithFailover), so a recovered model returns to the short park.
+ */
 function observeRefusal(id: string, status: number): void {
   const h = healthOf(id);
-  h.parkLeft = status === 429 ? PARK_AFTER_429 : PARK_AFTER_5XX;
+  h.refuseStreak++;
+  const base = status === 429 ? PARK_AFTER_429 : PARK_AFTER_5XX;
+  h.parkLeft = Math.min(PARK_CAP, base + 2 * (h.refuseStreak - 1));
 }
 
-/** Rating after the latency demotion: greedy, but a slow model steps aside. */
+/**
+ * Rating after the latency demotion: greedy, but a slow model steps aside.
+ * Revision: the penalty is GRADUATED, not flat — it grows with how far the
+ * model's running average sits above a healthy 1.5 s, capped, so a mildly
+ * slow model slips a place or two while a dreadful one drops out of
+ * contention entirely instead of both paying the same flat fine.
+ */
 function effectiveRating(m: FreeModel): number {
   const h = health.get(m.id);
-  if (h && h.demoteLeft > 0) return m.ratingMilli - DEMOTE_POINTS;
-  return m.ratingMilli;
+  if (!h || h.demoteLeft === 0 || h.calls === 0) return m.ratingMilli;
+  const avgMs = h.totalMs / h.calls;
+  const extra = Math.min(DEMOTE_MAX_EXTRA, Math.floor(Math.max(0, avgMs - 1500) / 10));
+  return m.ratingMilli - DEMOTE_BASE - extra;
 }
 
 function capable(m: FreeModel, need: Need): boolean {
@@ -769,6 +790,7 @@ async function dialWithFailover(candidates: FreeModel[], baseBody: Bag, wantsStr
     }
     observeDuration(candidate.id, performance.now() - started);
     if (res.ok && res.body !== null) {
+      healthOf(candidate.id).refuseStreak = 0; // a success ends any refusal streak
       return { response: res, modelId: candidate.id, refusals, lastStatus: 200, lastText: '' };
     }
     const text = await res.text().catch(() => '');

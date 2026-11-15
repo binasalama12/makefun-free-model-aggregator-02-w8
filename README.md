@@ -34,13 +34,15 @@ Requests name `model: "auto"`. For each one the gateway:
    slowly (a single call over the slow threshold, or a slow running average)
    loses points from its effective rating for the next few routing decisions,
    so traffic drifts toward models that are both good *and* quick right now.
-   The demotion is fed only by durations of calls already completed in the
-   same trial — never by an absolute clock reading.
+   The penalty is graduated: the slower the model's running average, the more
+   points it sheds. The demotion is fed only by durations of calls already
+   completed in the same trial — never by an absolute clock reading.
 4. Dials the winner through the gateway. On a 429, a 5xx or a network error
-   it fails over to the next ranked model, parks the refused model for a few
-   decisions so later prompts do not waste calls on it, and reports the
-   recovered refusals on the final response in the
-   `x-makefun-upstream-failures` header.
+   it fails over to the next ranked model, parks the refused model so later
+   prompts do not waste calls on it, and reports the recovered refusals on
+   the final response in the `x-makefun-upstream-failures` header. The park
+   escalates while a model keeps refusing (a success resets it), so a
+   chronically rate-limited model is re-probed less and less often.
 
 The `model` field of every response and every streamed chunk is the id that
 was actually dialled. The server polls `$MAKEFUN_ENV_URL/work` every 100 ms
